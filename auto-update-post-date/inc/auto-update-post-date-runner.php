@@ -152,9 +152,10 @@ function tmaupd_post_types_check_callback() {
     <?php
     $all_posts = get_posts(
         array(
-          'numberposts' => -1,
-          'post_status' => 'publish',
-          'post_type'   => $postTypes
+            'numberposts' => -1,
+            'post_status' => 'publish',
+            'fields'      => 'ids',
+            'post_type'   => $postTypes
         )
     );
     if ( $all_posts ) {
@@ -164,10 +165,8 @@ function tmaupd_post_types_check_callback() {
                 <span>Select/deselect all posts</span>
             </label><br>';
 
-        foreach($all_posts as $post){
-            $post_title = $post->post_title;
-            $post_id = $post->ID;
-
+        foreach($all_posts as $post_id){
+            $post_title = get_the_title($post_id);
             $is_present = in_array($post_id, $filtered_pids) ? 'checked' : '';
             
             echo '<input type="checkbox" class="aupd-posts-checkbox" id="aupd_post_' . absint($post_id) . '" name="tmaupd_ind_post_' . absint($post_id) . '" value="' . absint($post_id) . '"' . esc_attr($is_present) .' />';
@@ -297,15 +296,15 @@ function tmaupd_plugin_settings_action() {
 
         $all_posts = get_posts(
             array(
-              'numberposts' => -1,
-              'post_status' => 'publish',
-              'post_type'   => $postTypes
+                'numberposts' => -1,
+                'post_status' => 'publish',
+                'fields'      => 'ids',
+                'post_type'   => $postTypes
             )
         );
 
         if ( $all_posts ) {
-            foreach($all_posts as $post){
-                $post_id = $post->ID;
+            foreach($all_posts as $post_id){
                 if( isset($_POST['tmaupd_ind_post_' . $post_id]) ){
                     $aupd_post_filter_mode_ind_posts[] = $post_id;
                 }
@@ -512,7 +511,7 @@ function tmaupd_runner_action(){
             }
         }
     }
-    
+
     // if plugin is running in manual mode
     if ($aupd_plugin_mode_radio == 'manual_mode' && $aupd_post_filter_mode_status != 'checked'){
         $postsQuery = new WP_Query($args);
