@@ -3,6 +3,7 @@
 // List of all public cpts to be exluded. These include common libraries like elementor, jetengine, etc. Can be extended to more popular plugins
 $tmaupd_public_libs_cpt = [
     'e-landing-page',
+    'e-floating-buttons',
     'jet-form-builder',
     'elementor_library',
     'ct_template'
@@ -15,6 +16,8 @@ if( !function_exists('tmaupd_render_page') ){
 	    ?>
 	    <div id="aupd-container" class="wrap">
             <h1><?php echo esc_html(get_admin_page_title());?></h1>
+            <?php settings_errors(); ?>
+
             <form method="post" action="<?php echo esc_url(admin_url('tools.php?page='.$plugin_page));?>">
                 <?php
 	                wp_nonce_field('tmaupd_plugin_nonce', 'tmaupd_plugin_nonce_field');
@@ -93,7 +96,7 @@ function tmaupd_post_types_check_callback() {
             $value = get_option('tmaupd_cpt_' . $cpt);
             $checked = ($value) ? 'checked' : '';
             $cpt_name = get_post_type_object($cpt)->labels->singular_name;
-            
+
             echo '<input type="checkbox" id="cpt_' . esc_attr($cpt) . '" name="cpt_' . esc_attr($cpt) . '" value="cpt_' . esc_attr($cpt) . '"' . esc_attr($checked) .' />';
             echo '<label for="cpt_' . esc_attr($cpt) . '">' . esc_html($cpt_name) . '</label><br>';
         }
@@ -104,7 +107,7 @@ function tmaupd_post_types_check_callback() {
     <label for="tmaupd_post_filter_mode_status">Filter posts</label>
     <br>
     <p>Select an option below to filter specific posts to be updated. Choose to filter by taxonomy or individual posts.</p>
-    <sub>Please note that only the selected posts or posts that belong to the selected taxonomies will be updated. <i><strong>If want to update all posts belonging to a post type, untick this filter option and choose the relevant post type(s) above.</strong></i>
+    <sub>Please note that only the selected posts or posts that belong to the selected taxonomies will be updated. <i><strong>If you want to update all posts belonging to a post type, untick this filter option and choose the relevant post type(s) above.</strong></i>
     </sub>
     <div id="filter-taxy-radio-group">
         <br>
@@ -168,7 +171,7 @@ function tmaupd_post_types_check_callback() {
         foreach($all_posts as $post_id){
             $post_title = get_the_title($post_id);
             $is_present = in_array($post_id, $filtered_pids) ? 'checked' : '';
-            
+
             echo '<input type="checkbox" class="aupd-posts-checkbox" id="aupd_post_' . absint($post_id) . '" name="tmaupd_ind_post_' . absint($post_id) . '" value="' . absint($post_id) . '"' . esc_attr($is_present) .' />';
             ?>
 
@@ -446,163 +449,91 @@ function tmaupd_runner_action(){
             break;
     }
 
-    // query arguments
-    $args = [
-        'post_type' => $aupd_cpt_to_be_updated,
-        'posts_per_page' => -1,
-    ];
+    // resolve the list of post IDs to update based on filter selections
+    $target_ids = [];
 
-    // check through the available taxonomies when the selected mode is taxonomies
-    if ($aupd_plugin_mode_radio && $aupd_post_filter_mode == 'taxonomy_mode' && $aupd_post_filter_mode_status == 'checked'){
+    if ($aupd_post_filter_mode_status == 'checked' && $aupd_post_filter_mode == 'individual_post_mode') {
+        $target_ids = !empty($aupd_filter_ind_pid) ? array_map('absint', $aupd_filter_ind_pid) : [];
+    } elseif ($aupd_post_filter_mode_status == 'checked' && $aupd_post_filter_mode == 'taxonomy_mode') {
         if (!empty($aupd_filter_tax_terms)) {
-            $args['tax_query'] = [
-                'relation' => 'OR',
-            ];
+            $tax_query = ['relation' => 'OR'];
 
             foreach ($aupd_filter_tax_terms as $ctt) {
                 $term = get_term_by('term', $ctt);
+                if ($term) {
+                    $tax_query[] = [
+                        'taxonomy' => $term->taxonomy,
+                        'field'    => 'term_taxonomy_id',
+                        'terms'    => $ctt,
+                    ];
+                }
+            }
 
-                $args['tax_query'][] = [
-                    'taxonomy' => $term->taxonomy,
-                    'field'    => 'term_taxonomy_id',
-                    'terms'    => $ctt,
+            $target_ids = get_posts([
+                'post_type'      => $aupd_cpt_to_be_updated,
+                'posts_per_page' => -1,
+                'fields'         => 'ids',
+                'tax_query'      => $tax_query,
+            ]);
+        }
+    } else {
+        $target_ids = get_posts([
+            'post_type'      => $aupd_cpt_to_be_updated,
+            'posts_per_page' => -1,
+            'fields'         => 'ids',
+        ]);
+    }
+
+    if (empty($target_ids)) {
+        return;
+    }
+
+    foreach ($target_ids as $pid) {
+        if ($aupd_plugin_mode_radio == 'auto_mode') {
+            $upd_date_format = 'Y-m-d H:i:s';
+            $current_date = current_time($upd_date_format);
+
+            if ($aupd_auto_mode_offset_mode == 'checked') {
+                $offset_in_seconds = ($aupd_auto_mode_offset_unit === 'hours')
+                    ? $aupd_auto_mode_offset_value * 3600
+                    : $aupd_auto_mode_offset_value * 60;
+
+                $min_time = strtotime($current_date) - $offset_in_seconds;
+                $random_time = mt_rand($min_time, strtotime($current_date));
+                $current_date = date($upd_date_format, $random_time);
+            }
+
+            if ($aupd_post_dates_update == 'tmaupd_pub_date') {
+                $dates = [
+                    'post_date'         =>  $current_date,
+                    'post_date_gmt'     =>  get_gmt_from_date( $current_date ),
+                ];
+            } elseif ($aupd_post_dates_update == 'tmaupd_pub_mod_date') {
+                $dates = [
+                    'post_date'         =>  $current_date,
+                    'post_date_gmt'     =>  get_gmt_from_date( $current_date ),
+                    'post_modified'     =>  $current_date,
+                    'post_modified_gmt' =>  get_gmt_from_date( $current_date ),
+                ];
+            } else {
+                $dates = [
+                    'post_modified'     =>  $current_date,
+                    'post_modified_gmt' =>  get_gmt_from_date( $current_date ),
                 ];
             }
-
-            $postsTaxQuery = new WP_Query($args);
-
-            if ($postsTaxQuery->have_posts()) {
-                while ($postsTaxQuery->have_posts()) {
-                    $postsTaxQuery->the_post();
-
-                    $updated = $wpdb->update(
-                        $wpdb->posts,
-                        $dates,
-                        ['ID' => get_the_ID()],
-                        '%s',
-                        '%d'
-                    );
-
-                    if ($keep_logs && $updated) {
-                        tmaupd_log_updates(get_the_title() . ' updated successfully');
-                    }
-                }
-            }
-
-            wp_reset_postdata();
-        }
-    }
-
-    // specific posts mode - run the updates directly on selected posts and date options
-    if ($aupd_plugin_mode_radio && $aupd_post_filter_mode == 'individual_post_mode' && $aupd_post_filter_mode_status == 'checked'){
-        if (!empty($aupd_filter_ind_pid)) {
-            foreach ($aupd_filter_ind_pid as $pid) {
-                $updated = $wpdb->update(
-                    $wpdb->posts,
-                    $dates,
-                    ['ID' => $pid],
-                    '%s',
-                    '%d'
-                );
-
-                if ($keep_logs && $updated) {
-                    tmaupd_log_updates(get_the_title($pid) . ' updated successfully');
-                }
-            }
-        }
-    }
-
-    // if plugin is running in manual mode
-    if ($aupd_plugin_mode_radio == 'manual_mode' && $aupd_post_filter_mode_status != 'checked'){
-        $postsQuery = new WP_Query($args);
-
-        if ($postsQuery->have_posts()) {
-            while ($postsQuery->have_posts()) {
-                $postsQuery->the_post();
-
-                $updated = $wpdb->update(
-                    $wpdb->posts,
-                    $dates,
-                    ['ID' => get_the_ID()],
-                    '%s',
-                    '%d'
-                );
-
-                if ($keep_logs && $updated) {
-                    tmaupd_log_updates(get_the_title() . ' updated successfully');
-                }
-            }
         }
 
-        wp_reset_postdata();
-    }
+        $updated = $wpdb->update(
+            $wpdb->posts,
+            $dates,
+            ['ID' => $pid],
+            '%s',
+            '%d'
+        );
 
-    // if plugin is running in auto mode
-    if ($aupd_plugin_mode_radio == 'auto_mode'){
-        $upd_date_format = 'Y-m-d H:i:s';
-        $current_date = current_time($upd_date_format);
-
-        $postsQuery = new WP_Query($args);
-
-        if ($postsQuery->have_posts()) {             
-            while ($postsQuery->have_posts()) {
-                $postsQuery->the_post();
-
-                if ($aupd_auto_mode_offset_mode == 'checked') {
-                    $offset_value = $aupd_auto_mode_offset_value;
-                    $offset_unit = $aupd_auto_mode_offset_unit;
-
-                    $offset_in_seconds = 0;
-
-                    switch ($offset_unit) {
-                        case 'hours':
-                            $offset_in_seconds = $offset_value * 3600;
-                            break;
-                        default:
-                            $offset_in_seconds = $offset_value * 60;
-                            break;
-                    }
-
-                    $min_time = strtotime($current_date) - $offset_in_seconds;
-                    $random_time = mt_rand($min_time, strtotime($current_date));
-                    $current_date = date($upd_date_format, $random_time);
-                }
-
-                // set date to current date
-                if ($aupd_post_dates_update == 'tmaupd_pub_date'){
-                    $dates = [
-                        'post_date'         =>  $current_date,
-                        'post_date_gmt'     =>  get_gmt_from_date( $current_date ),
-                    ];
-                } elseif ($aupd_post_dates_update == 'tmaupd_pub_mod_date') {
-                    $dates = [
-                        'post_date'         =>  $current_date,
-                        'post_date_gmt'     =>  get_gmt_from_date( $current_date ),
-                        'post_modified'     =>  $current_date,
-                        'post_modified_gmt' =>  get_gmt_from_date( $current_date ),
-                    ];
-                } else {
-                    $dates = [
-                        'post_modified'     =>  $current_date,
-                        'post_modified_gmt' =>  get_gmt_from_date( $current_date ),
-                    ];
-                }
-
-                $updated = $wpdb->update(
-                    $wpdb->posts,
-                    $dates,
-                    ['ID' => get_the_ID()],
-                    '%s',
-                    '%d'
-                );
-
-                if ($keep_logs && $updated) {
-                    tmaupd_log_updates(get_the_title() . ' updated successfully');
-                }
-            }
+        if ($keep_logs && $updated) {
+            tmaupd_log_updates(get_the_title($pid) . ' updated successfully');
         }
-
-        wp_reset_postdata();
     }
 }
 add_action('tmaupd_cron_job_action', 'tmaupd_runner_action');

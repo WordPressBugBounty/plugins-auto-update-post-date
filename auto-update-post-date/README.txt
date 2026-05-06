@@ -100,5 +100,11 @@ Please submit feature requests on [GitHub](https://github.com/git-temak/auto-upd
 = 1.1.0 =
 * Improve performance with WP functions and compatibility upgrade with latest WP versions
 
+= 1.1.1 =
+* Fix an error with auto mode not updating selected posts
+* Exclude floating element cpt
+
 == Upgrade Notice ==
-* None
+
+= 1.1.1 =
+* Fix an error with auto mode not updating selected posts
